@@ -2181,6 +2181,8 @@
       id_SOAS   = Ind_( 'SOAS'   )  
       id_SALA   = Ind_( 'SALA'   )  
       id_SALC   = Ind_( 'SALC'   )   
+      id_SALACL = Ind_( 'SALACL' )  
+      id_SALCCL = Ind_( 'SALCCL' )   
       id_SO4    = Ind_( 'SO4'    )         
       id_SO4s   = Ind_( 'SO4s'   )  
       id_NITs   = Ind_( 'NITs'   ) 

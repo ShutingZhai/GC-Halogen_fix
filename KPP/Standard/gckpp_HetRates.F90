@@ -71,7 +71,7 @@ MODULE GCKPP_HETRATES
   PRIVATE :: HETIUptake
   PRIVATE :: HETIXCycleSSA      !XW modified
 
-  ! Halogen fuctions, XW
+  ! Halogen functions, XW
   PRIVATE :: HETBrNO3
   PRIVATE :: HETClNO3
   PRIVATE :: HETHOBr_HBr
@@ -92,7 +92,7 @@ MODULE GCKPP_HETRATES
   PRIVATE :: HETClNO2          
   PRIVATE :: HetNO3_Cl        
 
-  ! Halogen gamma calculation and other subrontines, XW
+  ! Halogen gamma calculation and other subroutines, XW
   PRIVATE :: Gamma_O3_Br
   PRIVATE :: Gamma_HX_Uptake
   PRIVATE :: Coth
@@ -174,7 +174,7 @@ MODULE GCKPP_HETRATES
 !$OMP THREADPRIVATE( KHETI_SLA,    SUNCOS,   AClAREA,  AClRADI    )
 !$OMP THREADPRIVATE( H_PLUS,       MSO4,       MNO3,     MHSO4    )
 !$OMP THREADPRIVATE( HSO3conc_Cld, SO3conc_Cld, fupdateHOBr       )
-!$OMP THREADPRIVATE( fupdateHOCl, nitConc_SALA, nitConc_SALC     )
+!$OMP THREADPRIVATE( fupdateHOCl, nitConc_SALA, nitConc_SALC      )
 
 ! !DEFINED PARAMETERS:
 !
@@ -665,7 +665,7 @@ MODULE GCKPP_HETRATES
       ! Get the concentration of Cl-
       CALL Get_Halide_SSAConc(spcVec(Ind_('SALACL')), AClAREA,AClRADI, clConc_SALA)
       CALL Get_Halide_SSAConc(spcVec(Ind_('SALCCL')), xArea(12),xRadi(12), clConc_SALC)
-      ! Get the concentration of NO3-
+       ! Get the concentration of NO3-
       CALL Get_Halide_SSAConc(spcVec(Ind_('NIT')), AClAREA,AClRADI,nitConc_SALA)
       CALL Get_Halide_SSAConc(spcVec(Ind_('NITs')), xArea(12),xRadi(12),nitConc_SALC)      
       ! Get theta for ice cloud uptake
@@ -1026,7 +1026,6 @@ MODULE GCKPP_HETRATES
          HET(ind_HBr,   1) = kITemp
          kITemp = HETHXUptake( XDenA, xRadi(12), xArea(12), TempK, 2)
          HET(ind_HBr,   2) = kITemp
-
          !----------------------------------------------------------------
          ! BrNO3 + HCl in stratosphere
          !----------------------------------------------------------------
@@ -4417,8 +4416,8 @@ MODULE GCKPP_HETRATES
       REAL(fp),  PARAMETER   :: H_HOCl_T  = 298.15
 
       REAL(fp)       :: ab, M_X, k1, k2, H_X, C_Y2, gb_tot
-      REAL(fp)       :: cavg, D_l, gb1, gb2, l_r1, l_r2, k_tot
-     
+      REAL(fp)       :: cavg, D_l, l_r, k_tot
+
       C_Y2 = C_Y3 + C_Y4
       M_X = M_HOCl
       ! Mass accommodation coefficient
@@ -4432,20 +4431,15 @@ MODULE GCKPP_HETRATES
 
       k1 = 1.5e+4_fp !M-1s-1
       k2 = 7.6e+8_fp !M-1s-1 Fogelman et al., 1988
+      k_tot = k1 * C_Hp * C_Y1 + k2 * C_Y2
 
       H_X = H_HOCl*dexp(-H_HOCl_E*(1.0e0_fp/T - 1.0e0_fp/H_HOCl_T))
 
-      l_r1 = dsqrt(D_l / (k1 * C_Hp * C_Y1))
-      gb1 = 4.0e0_fp * H_X * con_R * T * l_r1 * k1 * C_Hp * C_Y1 / cavg
-      gb1 = gb1 * REACTODIFF_CORR( Radius, l_r1)
+      l_r = dsqrt( D_l / k_tot )
+      gb_tot = 4.0e0_fp * H_X * con_R * T * l_r * k_tot / cavg
+      gb_tot = gb_tot * REACTODIFF_CORR( Radius, l_r)
 
-      l_r2 = dsqrt(D_l / (k2 * C_Y2))
-      gb2 = 4.0e0_fp * H_X * con_R * T * l_r2 * k2 * C_Y2 / cavg
-      gb2 = gb2 * REACTODIFF_CORR( Radius, l_r2)
-
-      gb_tot = gb1 + gb2
-      k_tot = k1 * C_Hp * C_Y1 + k2 * C_Y2
-
+      ! Reactive uptake coefficient [unitless]
       GAM_HOCl = 1.0e0_fp / (1.0e0_fp/ab  +  1.0e0_fp/gb_tot)
 
       ! turn off HOCl+S(IV), XW
@@ -4516,6 +4510,7 @@ MODULE GCKPP_HETRATES
       REAL(fp)       :: cavg, D_l, gb, l_r
 
       M_X = M_HOCl
+
       ! Mass accommodation coefficient
       ab = 0.8e0_fp
 
@@ -5647,13 +5642,13 @@ MODULE GCKPP_HETRATES
 !      ELSEIF ( X==3 ) THEN
          ! Reaction rate coefficient for HOBr + HSO3- [M-2 s-1]
          ! (Liu and Margerum, Environ. Sci. Tech., 2001)
-         !k_b3  = 3.2e+9_fp 
-         k_b3  = 0.0e0_fp
+         k_b3  = 3.2e+9_fp 
+!         k_b3  = 0.0e0_fp
 !      ELSEIF ( X==4 ) THEN
          ! Reaction rate coefficient for HOBr + HSO3-- [M-2 s-1]
          ! (Troy and Margerum, Inorg. Chem., 1991)
-         !k_b4  = 5.0e+9_fp 
-         k_b4 = 0.0e0_fp
+         k_b4  = 5.0e+9_fp 
+         !k_b4 = 0.0e0_fp
 !      ENDIF
 
       ! Liquid phase diffusion coefficient [cm2/s] for HOBr
@@ -5874,7 +5869,7 @@ MODULE GCKPP_HETRATES
       C_Hp2 = min(C_Hp, 1.0e-2)
       C_Hp1 = max(C_Hp1, 1.0e-9)
       C_Hp2 = max(C_Hp2, 1.0e-6)      
-
+      
       k_tot = k_b1 * C_Y1 * C_Hp1 + k_b2 * C_Y2 * C_Hp2
 
       ! l_r is diffusive length scale [cm]; gb is Bulk reaction coefficient [unitless]
@@ -6078,7 +6073,7 @@ MODULE GCKPP_HETRATES
      cavg = dsqrt(8.0e+0_fp*RStarG*T/(Pi*9.745e-2_fp)) *1.0e2_fp ! thermal velocity (cm/s)
      H2Os = 1e15_fp - 3.0*2.7e14_fp*hno3_th
      kks = 4.0_fp * 5.2e-17_fp * exp(2032_fp/T)
-     g3 = 1.0_fp / (1.0_fp/0.5_fp + cavg/kks)
+     g3 = 1.0_fp / (1.0_fp/0.5_fp + cavg/(kks*H2Os))
 
      GAM_ClNO3 = g1 + g2 + g3
           
@@ -6168,7 +6163,7 @@ MODULE GCKPP_HETRATES
       REAL(fp)                 :: x
  
       x = radius / l
- 
+
       IF (x<0.0e0_fp) THEN
          PRINT *, 'ERROR x<0, particle radius or C_Y is neg!'
       ELSEIF (x>1.0e3_fp) THEN
@@ -6885,7 +6880,8 @@ MODULE GCKPP_HETRATES
          !----------------
          CASE ( 8 )     
             ! This is not used when considering Cl-, XW    
-            call ERROR_STOP( 'N2O5 update on sulfate should not be calculated here','gckpp_HetRates.F90')
+!            call ERROR_STOP( 'N2O5 update on sulfate should not be calculated here','gckpp_HetRates.F90')
+            GAMMA = 0.00e+0_fp
 
          !----------------
          ! Black Carbon
@@ -6913,7 +6909,8 @@ MODULE GCKPP_HETRATES
          !----------------
          CASE ( 11, 12 )        
             ! This is not used when considering Cl-, XW 
-            call ERROR_STOP( 'N2O5 update on sea salt should not be calculated here','gckpp_HetRates.F90' )
+!            call ERROR_STOP( 'N2O5 update on sea salt should not be calculated here','gckpp_HetRates.F90' )
+            GAMMA = 0.00e+0_fp
 
          !----------------
          ! Strat. aerosols
@@ -7507,10 +7504,11 @@ END SUBROUTINE GAMMA_N2O5_Cl
       FROCEAN => State_Met%FROCEAN
 
       CLDFr = CLDF(I,J,L)
-      IF ( CLDFR.le.0.0e+0_fp ) CLDFr = 1.0e-32_fp
+      CLDFr = Max(CLDFr, 0.0e+0_fp)
+      CLDFr = Min(CLDFr, 1.0e+0_fp)
 
       ! Quick test - is there any cloud?
-      IF (((QL.le.0.0e+0_fp).and.(QL.le.0.0e+0_fp)).or.(CLDF(I,J,L).le.0.0e+0_fp)) THEN
+      IF (((QL.le.0.0e+0_fp).and.(QI.le.0.0e+0_fp)).or.(CLDF(I,J,L).le.0.0e+0_fp)) THEN
          rLiq = xCldR_Cont
          ALiq = 0.0e+0_fp
          VLiq = 0.0e+0_fp
@@ -7663,7 +7661,7 @@ END SUBROUTINE GAMMA_N2O5_Cl
 
       !V_tot = (VLiq/VAir) + ((VIce/VAir) / T2L) ! (cm3(liq)/cm3(air)
       V_tot = VLiq/VAir ! (cm3(liq)/cm3(air)
-      V_tot = V_tot / CF ! only consider in cloud
+      V_tot = SAFE_DIV(V_tot, CF, 0.e+0_fp) ! only consider in cloud
 
       IF (V_tot.lt.1.0e-20) THEN
          br_conc = 1.0e-20_fp
@@ -7701,7 +7699,7 @@ END SUBROUTINE GAMMA_N2O5_Cl
 !\\
 ! !INTERFACE:
 !
-      SUBROUTINE GET_THETA_ICE( HNO3, HBr, HCl, TK, hno3_th, hbr_th, hcl_th)
+      SUBROUTINE GET_THETA_ICE( HNO3, HCl, HBr, TK, hno3_th, hcl_th, hbr_th)
 
 
 ! !USES:

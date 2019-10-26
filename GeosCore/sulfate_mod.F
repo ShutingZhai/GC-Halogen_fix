@@ -9169,6 +9169,7 @@
       id_H2O2  = Ind_('H2O2'     )
       id_HNO3  = Ind_('HNO3'     )
       id_HOBr  = Ind_('HOBr'     )
+      id_HOCl  = Ind_('HOCl'     )
       id_LET   = Ind_('LET'      )
       id_MSA   = Ind_('MSA'      )
       id_NH3   = Ind_('NH3'      )

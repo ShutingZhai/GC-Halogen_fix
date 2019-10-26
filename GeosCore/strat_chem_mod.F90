@@ -218,13 +218,12 @@ CONTAINS
     USE ERROR_MOD
     USE Input_Opt_Mod,      ONLY : OptInput
     USE LINOZ_MOD,          ONLY : DO_LINOZ
-    USE PhysConstants,      ONLY : XNUMOLAIR, AIRMW
+    USE PhysConstants,      ONLY : XNUMOLAIR, AIRMW, AVO
     USE State_Chm_Mod,      ONLY : ChmState
     USE State_Met_Mod,      ONLY : MetState
     USE TIME_MOD,           ONLY : GET_MONTH
     USE TIME_MOD,           ONLY : TIMESTAMP_STRING
     USE UnitConv_Mod,       ONLY : Convert_Spc_Units
-
     IMPLICIT NONE
 !
 ! !INPUT PARAMETERS:
@@ -294,6 +293,7 @@ CONTAINS
     LOGICAL           :: IT_IS_A_FULLCHEM_SIM
     LOGICAL           :: IT_IS_A_TAGO3_SIM
     LOGICAL           :: IT_IS_A_H2HD_SIM
+    LOGICAL           :: Is_UCX_Spc
 
     ! Scalars
     LOGICAL           :: prtDebug
@@ -303,6 +303,7 @@ CONTAINS
     REAL(fp)          :: dt,   P,       k,   M0,  RC,     M
     REAL(fp)          :: TK,   RDLOSS,  T1L, mOH, BryTmp
     REAL(fp)          :: BOXVL
+    REAL(fp)          :: MW_g, SpcConc, Num, Den
     LOGICAL           :: LLINOZ
     LOGICAL           :: LSYNOZ
     LOGICAL           :: LPRT
@@ -373,6 +374,7 @@ CONTAINS
           ! Get pointers to prod/loss fields via HEMCO
           CALL Set_PLVEC ( am_I_Root, Input_Opt,                &
                            State_Chm, State_Met, errCode )
+          ! Trap potential errors
           IF ( errCode /= GC_SUCCESS ) RETURN
        ENDIF
     ENDIF
@@ -420,9 +422,12 @@ CONTAINS
        ! which we have explicit prod/loss rates from GMI
        !--------------------------------------------------------------------
 
-       !$OMP PARALLEL DO &
+       ! Timestep [s], can be pulled outside of parallel loop
+       dt = DTCHEM
+
+       !$OMP PARALLEL DO       &
        !$OMP DEFAULT( SHARED ) &
-       !$OMP PRIVATE( I, J, L, N, NN, NA, k, P, dt, M0 )
+       !$OMP PRIVATE( I, J, L, N, NN, NA, k, P, M0, MW_g, SpcConc, Num, Den )
        DO J=1,JJPAR
           DO I=1,IIPAR
 
@@ -434,6 +439,16 @@ CONTAINS
              ! (bmy, 7/18/12)
              DO L = 1, LLPAR
 
+                ! For safety's sake, zero variables at each (I,J,L) box
+                Den     = 0.0_fp
+                k       = 0.0_fp
+                M0      = 0.0_fp
+                Mw_g    = 0.0_fp
+                Num     = 0.0_fp
+                P       = 0.0_fp
+                SpcConc = 0.0_fp
+                
+                ! Only consider boxed above the chemistry grid
                 IF ( ITS_IN_THE_CHEMGRID( I, J, L, State_Met ) ) CYCLE
 
                 ! Loop over the # of active strat chem species
@@ -442,6 +457,7 @@ CONTAINS
                    ! Species ID (use this for State_Chm%Species)
                    NN = Strat_TrID_GC(N)
 
+                   ! Advected species ID (use this for SCHEM_TEND)
                    NA = Strat_TrID_TND(N)
 
                    ! Skip O3; we'll always use either Linoz or Synoz
@@ -450,28 +466,80 @@ CONTAINS
                    IF ( IT_IS_A_FULLCHEM_SIM .and. NN .eq. id_O3 .AND. &
                         ( LLINOZ .OR. LSYNOZ ) ) CYCLE
 
-                   ! timestep [s]
-                   dt = DTCHEM
+                   ! Molecular weight for the species [g]
+                   MW_g = State_Chm%SpcData(NN)%Info%emMW_g
 
                    ! loss freq [s-1] 
                    IF ( .NOT. ASSOCIATED(PLVEC(N)%LOSS) ) THEN
+                      ! If the PLVEC(N)%LOSS pointer is null, then the
+                      ! species doesn't have a loss rate.  Set k to 0.
                       k = 0.0_fp
                    ELSE
-                      k = PLVEC(N)%LOSS(I,J,L)
+                      ! Determine if we are using a UCX-based simulation
+                      ! or a tropchem simulation (without UCX)
+                      IF ( .not. Is_UCX_Spc ) THEN
+
+                         ! %%%%% SIMULATION USES THE UCX(GMI as default) MECHANISM %%%%%
+                         ! Loss rates (archived from GMI) are in s-1
+                         k = PLVEC(N)%LOSS(I,J,L)
+
+                      ELSE
+
+                         ! %%%%% SIMULATION USES THE TROPCHEM MECHANISM %%%%%
+                         ! Loss rates (archived from UCX) are in molec/cm3/s
+                         ! Convert to s-1 here
+                         SpcConc = Spc(I,J,L,NN)                             &
+                                   * ( AVO / ( MW_g * 1.e-3_fp ) )           &
+                                   / ( State_Met%AIRVOL(I,J,L) * 1e+6_fp )
+
+                         ! k is the loss rate divided by the concentration
+                         ! Return 0 if the division cannot be done
+                         Num = PLVEC(N)%LOSS(I,J,L)
+                         Den = SpcConc
+                         k   = Safe_Div( N         = Num,                    &
+                                         D         = Den,                    &
+                                         Alt_NaN   = 0.0_fp,                 &
+                                         Alt_Over  = 0.0_fp,                 &
+                                         Alt_Under = 0.0_fp                 )
+
+                      ENDIF
                    ENDIF
 
                    ! prod term [v/v/s --> kg/s]
                    IF ( .NOT. ASSOCIATED(PLVEC(N)%PROD) ) THEN
+                      ! If the PLVEC(N)%PROD pointer is null, then the
+                      ! species doesn't have a production rate.  Set P to 0.
                       P = 0.0_fp 
                    ELSE
-                      P = PLVEC(N)%PROD(I,J,L) * AD(I,J,L) / ( AIRMW / &
-                          State_Chm%SpcData(NN)%Info%emMW_g )
+                      ! Determine if we are using a UCX-based simulation
+                      ! or a tropchem simulation (without UCX) 
+                      IF ( .not. Is_UCX_Spc ) THEN
+
+                         ! %%%%% SIMULATION USES THE UCX(GMI as default) MECHANISM %%%%%
+                         ! Prod rates (archived from GMI) are in v/v/s
+                         ! Convert to kg/s here
+                         P = PLVEC(N)%PROD(I,J,L)                            &
+                           * AD(I,J,L) / ( AIRMW / MW_g )
+
+                      ELSE
+
+                         ! %%%%% SIMULATION USES THE TROPCHEM MECHANISM %%%%%
+                         ! Prod rates (archived from UCX) are in molec/cm3/s
+                         ! Convert to kg/s here
+                         P = PLVEC(N)%PROD(I,J,L)                            &
+                           / ( AVO / ( MW_g  * 1.e-3_fp ) )                  &
+                           * ( State_Met%AIRVOL(I,J,L) * 1e+6_fp ) 
+
+                      ENDIF
                    ENDIF
 
+                   ! Apply prod and loss
                    ! Initial mass [kg]
                    M0 = Spc(I,J,L,NN)
 
                    ! No prod or loss at all
+                   ! NOTE: Bad form to test for equality on zero!
+                   ! Replace this later (bmy,4/9/18)
                    IF ( k .eq. 0e+0_fp .and. P .eq. 0e+0_fp ) CYCLE
 
                    ! Simple analytic solution to dM/dt = P - kM over [0,t]
@@ -928,7 +996,7 @@ CONTAINS
     USE HCO_INTERFACE_MOD,  ONLY : HcoState
     USE HCO_EMISLIST_MOD,   ONLY : HCO_GetPtr 
     USE Input_Opt_Mod,      ONLY : OptInput
-    USE PhysConstants,      ONLY : AVO, AIRMW
+    USE PhysConstants,      ONLY : AIRMW
     USE State_Chm_Mod,      ONLY : ChmState
     USE State_Met_Mod,      ONLY : MetState
     USE UnitConv_Mod,       ONLY : Convert_Spc_Units
@@ -982,16 +1050,6 @@ CONTAINS
           'expected to be listed in the HEMCO configuration file. '// &
           'This error occured when trying to get field'
 
-    ! Convert species to [molec/cm3]
-    CALL Convert_Spc_Units( am_I_Root, Input_Opt, State_Met, & 
-                            State_Chm, 'molec/cm3', RC, &
-                            OrigUnit=OrigUnit )
-    IF ( RC /= GC_SUCCESS ) THEN
-       Err_Msg = 'Unit conversion error!'
-       CALL GC_Error( Err_Msg, RC, 'flexchem_mod.F90')
-       RETURN
-    ENDIF 
-
     ! Do for every species 
     DO N = 1,NSCHEM
 
@@ -1036,7 +1094,6 @@ CONTAINS
             TRIM( ThisName ) .eq. 'AERI' ) THEN
           Is_UCX_Spc = .TRUE.
        ELSE
-          !Is_UCX_Spc = .FALSE.
           Is_UCX_Spc = .TRUE.
        ENDIF
 
@@ -1050,13 +1107,16 @@ CONTAINS
        ELSE
           FIELDNAME = 'GMI_PROD_'//TRIM(ThisName)
        ENDIF
+       ! Get pointer from HEMCO
        CALL HCO_GetPtr( am_I_Root,     HcoState, FIELDNAME, &
                         PLVEC(N)%PROD, RC,       FOUND=FND )
+       ! Trap potential errors
        IF ( RC /= HCO_SUCCESS .OR. ( PLMUSTFIND .AND. .NOT. FND) ) THEN
           CALL ERROR_STOP ( TRIM(ERR)//' '//TRIM(FIELDNAME), &
                             'Set_PLVEC (start_chem_mod.F90)' )
           RETURN
        ENDIF
+       ! Warning message
        IF ( .NOT. FND .AND. AM_I_ROOT ) THEN
           MSG = 'Cannot find archived GMI production rates for ' // &
                 TRIM(ThisName) // ' - will use value of 0.0. '   // &
@@ -1071,13 +1131,16 @@ CONTAINS
        ELSE
           FIELDNAME = 'GMI_LOSS_'//TRIM(ThisName)
        ENDIF
+       ! Get pointer from HEMCO
        CALL HCO_GetPtr( am_I_Root,     HcoState, FIELDNAME, &
                         PLVEC(N)%LOSS, RC,       FOUND=FND )
+       ! Trap potential errors
        IF ( RC /= HCO_SUCCESS .OR. ( PLMUSTFIND .AND. .NOT. FND) ) THEN
           CALL ERROR_STOP ( TRIM(ERR)//' '//TRIM(FIELDNAME), &
                             'Set_PLVEC (start_chem_mod.F90)' )
           RETURN
        ENDIF
+       ! Warning message
        IF ( .NOT. FND .AND. AM_I_ROOT ) THEN
           MSG = 'Cannot find archived GMI loss frequencies for ' // &
                 TRIM(ThisName) // ' - will use value of 0.0. '   // &
@@ -1086,56 +1149,12 @@ CONTAINS
           WRITE(6,*) TRIM(MSG)
        ENDIF
 
-       ! UCX rates are in molec/cm3/s; need to convert to expected units
-       IF ( Is_UCX_Spc ) THEN
-          ! Do not parellelize for now -- this may be replaced in v11-02e
-          ! (also we need to include loop over N)
-          !!!$OMP PARALLEL DO &
-          !!!$OMP DEFAULT( SHARED ) &
-          !!!$OMP PRIVATE( I, J, L, BOXVL, AIRDENS )
-          DO L = 1, LLPAR
-          DO J = 1, JJPAR
-          DO I = 1, IIPAR
-
-             ! Grid box volume [cm3]
-             BOXVL    = State_Met%AIRVOL(I,J,L) * 1e+6_fp
-
-             ! Air density [molec/cm3]
-             AIRDENS= State_Met%AD(I,J,L) * 1000e+0_fp   / &
-                      BOXVL               * AVO / AIRMW
-
-             ! Convert PROD from molec/cm3/s to v/v/s for
-             PLVEC(N)%PROD(I,J,L) = PLVEC(N)%PROD(I,J,L) / AIRDENS
-
-             ! Convert LOSS from molec/cm3/s to 1/s
-             SpcConc = State_Chm%Species(I,J,L,TRCID)
-             IF ( SpcConc > 0 ) THEN
-                PLVEC(N)%LOSS(I,J,L) = PLVEC(N)%LOSS(I,J,L) / SpcConc
-             ELSE
-                PLVEC(N)%LOSS(I,J,L) = 0e+0_fp
-             ENDIF
-
-          ENDDO
-          ENDDO
-          ENDDO
-          !!!$OMP END PARALLEL DO
-       ENDIF
-
-
     ENDDO !N
-
-    ! Convert species back to original units (ewl, 8/16/16)
-    CALL Convert_Spc_Units( am_I_Root, Input_Opt, State_Met, &
-                            State_Chm, OrigUnit,  RC )
-    IF ( RC /= GC_SUCCESS ) THEN
-       Err_Msg = 'Unit conversion error!'
-       CALL GC_Error( Err_Msg, RC, 'flexchem_mod.F90' )
-       RETURN
-    ENDIF  
 
     ! Get pointer to STRAT_OH
     CALL HCO_GetPtr( am_I_Root, HcoState, 'STRAT_OH', &
                      STRAT_OH,  RC,        FOUND=FND )
+    ! Trap potential errors
     IF ( RC /= HCO_SUCCESS .OR. .NOT. FND ) THEN
        MSG = 'Cannot find monthly archived strat. OH field '    // &
              '`STRAT_OH`. Please add a corresponding entry to ' // &

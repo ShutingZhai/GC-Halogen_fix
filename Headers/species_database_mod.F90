@@ -1974,7 +1974,7 @@ CONTAINS
                               Name          = 'HOCl',                       &
                               FullName      = 'Hypochlorous acid',          &
                               Formula       = 'HOCl',                       &
-                              MW_g          = 52.45_fp,                      &
+                              MW_g          = 52.45_fp,                     &
                               Is_Advected   = Is_Advected,                  &
                               Is_Gas        = T,                            &
                               Is_Drydep     = T,                            &
